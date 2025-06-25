@@ -1,10 +1,21 @@
 import streamlit as st
-from database_utils import get_messages_by_doc_id, add_message
-from ai_core import get_chat_response
+from database_utils import get_messages_by_doc_id, add_message, get_single_document
+from ai_core import get_chat_response, extract_text_from_pdf, split_text_into_chunks
 
 st.set_page_config(page_title="Chat with Document", page_icon="💬")
 
-# --- Authentication Check and State Verification ---
+# --- Function to prepare the chat context ---
+# This makes sure we always have the latest data
+@st.cache_data(show_spinner=False)
+def prepare_chat_data(doc_id):
+    document_data = get_single_document(doc_id)
+    if document_data:
+        full_text = extract_text_from_pdf(document_data['storage_path'])
+        text_chunks = split_text_into_chunks(full_text)
+        return document_data, text_chunks
+    return None, None
+
+# --- Authentication and Document Selection Check ---
 if st.session_state.get('username') is None:
     st.error("You need to log in to access this page.")
     st.info("Please go to the main page to log in.")
@@ -16,36 +27,34 @@ if st.session_state.get('selected_doc_id') is None:
     st.stop()
 
 # --- If everything is okay, proceed ---
-
 doc_id = st.session_state.get('selected_doc_id')
-doc_info = st.session_state.get('selected_doc_info')
-text_chunks = st.session_state.get('text_chunks')
+document_data, text_chunks = prepare_chat_data(doc_id)
 
-st.title(f"Chat with: *{doc_info['original_filename']}* 💬")
+if not document_data or not text_chunks:
+    st.error("Could not load the document data or its content. Please try re-uploading the file.")
+    st.stop()
+
+# --- Main Chat Interface ---
+st.title(f"Chat with: *{document_data['original_filename']}* 💬")
 st.info("The AI will answer questions based only on the content of this document.")
 st.write("---")
 
-# --- Chat History Display ---
-# Load and display previous messages for this document
+# Display previous messages from the database
 messages = get_messages_by_doc_id(doc_id)
 for msg in messages:
     with st.chat_message(msg['role']):
         st.markdown(msg['content'])
 
-# --- Chat Input and Logic ---
+# Handle new chat input
 if prompt := st.chat_input("Ask a question about your document"):
-    # Save and display user's message
     add_message(doc_id, "user", prompt)
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # Get and display AI response
     with st.chat_message("assistant"):
         with st.spinner("The AI is thinking..."):
-            # Pass the AI memory (faiss_index) and text chunks to the chat function
-            faiss_index_data = doc_info['faiss_index']
+            faiss_index_data = document_data['faiss_index']
             response = get_chat_response(faiss_index_data, prompt, text_chunks)
             st.markdown(response)
     
-    # Save AI's message to the database
     add_message(doc_id, "assistant", response)
