@@ -26,11 +26,15 @@ doc_id = st.session_state.get('selected_doc_id')
 doc_info, text_chunks = prepare_chat_data(doc_id)
 
 if not doc_info or not text_chunks:
-    st.error("Could not load document data. Please re-upload.")
+    st.error("Could not load the document data. The PDF might be a scan or empty.")
     st.stop()
 
 st.title(f"Chat with: *{doc_info['original_filename']}* 💬")
 
+# --- NEW DEBUG MODE ---
+debug_mode = st.sidebar.checkbox("Show Debug Information")
+
+# Display previous messages
 messages = get_messages_by_doc_id(doc_id)
 for msg in messages:
     with st.chat_message(msg['role']):
@@ -44,7 +48,11 @@ if prompt := st.chat_input("Ask a question..."):
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
             faiss_index_data = doc_info['faiss_index']
-            response = get_chat_response(faiss_index_data, prompt, text_chunks)
+            response, context = get_chat_response(faiss_index_data, prompt, text_chunks)
             st.markdown(response)
     
     add_message(doc_id, "assistant", response)
+
+    if debug_mode:
+        with st.expander("DEBUG: Context Provided to AI", expanded=True):
+            st.text(context)

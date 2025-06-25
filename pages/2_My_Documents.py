@@ -15,7 +15,7 @@ if not user_documents:
     st.warning("You haven't uploaded any documents yet.")
 else:
     for doc in user_documents:
-        with st.expander(f"**{doc['original_filename']}**"):
+        with st.expander(f"**{doc['original_filename']}** - Uploaded on {doc['uploaded_at'][:10]}"):
             if st.button("Chat 💬", key=f"chat_{doc['id']}"):
                 st.session_state['selected_doc_id'] = doc['id']
                 st.switch_page("pages/3_Chat.py")

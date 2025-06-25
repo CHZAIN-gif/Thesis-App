@@ -16,8 +16,10 @@ def extract_text_from_pdf(pdf_path):
             pdf_reader = PyPDF2.PdfReader(pdf_file_obj)
             full_text = ""
             for page in pdf_reader.pages:
-                full_text += page.extract_text() + "\n"
-        return full_text
+                page_text = page.extract_text()
+                if page_text:
+                    full_text += page_text + "\n"
+        return full_text if full_text else None
     except Exception:
         return None
 
@@ -49,6 +51,7 @@ def create_embeddings(text_chunks):
         return None
 
 def get_chat_response(faiss_index_data, user_question, text_chunks):
+    """The main chat function. Now returns the response AND the context for debugging."""
     try:
         index = faiss.read_index(faiss.PyCallbackIOReader(io.BytesIO(faiss_index_data).read))
         question_embedding_result = genai.embed_content(
@@ -61,16 +64,21 @@ def get_chat_response(faiss_index_data, user_question, text_chunks):
         context = ""
         for i in indices[0]:
             if i < len(text_chunks):
-                context += text_chunks[i] + "\n"
-        
+                context += text_chunks[i] + "\n\n"
+
         prompt = f"""
-        Answer the question based ONLY on the provided context.
-        If the answer is not in the context, say "I could not find the answer in the document."
-        Context: {context}
-        Question: {user_question}
+        Answer the following user question based ONLY on the provided context. If the answer is not available in the context, you must say 'I could not find the answer in the document.'
+
+        CONTEXT:
+        {context}
+
+        USER QUESTION:
+        {user_question}
         """
         model = genai.GenerativeModel('gemini-1.5-flash-latest')
         response = model.generate_content(prompt)
-        return response.text
+        
+        # Return both the AI's text and the context we used
+        return response.text, context
     except Exception as e:
-        return f"An error occurred during chat: {e}"
+        return f"An error occurred during chat: {e}", ""
