@@ -65,7 +65,6 @@ def get_chat_response(document_id, user_question, text_chunks):
         )
         question_embedding = question_embedding_result['embedding']
         
-        # This line has the fix for the "unpack" error
         distances, indices = index.search(np.array([question_embedding]).astype('float32'), k=3)
         
         context = ""
@@ -73,9 +72,16 @@ def get_chat_response(document_id, user_question, text_chunks):
             if i < len(text_chunks):
                 context += text_chunks[i] + "\n"
 
+        # --- NEW DEBUGGING LINES ---
+        print("="*50)
+        print("CONTEXT PROVIDED TO AI:")
+        print(context)
+        print("="*50)
+        # --- END OF DEBUGGING LINES ---
+
         prompt = f"""
         You are a helpful AI assistant. Answer the following question based ONLY on the provided context.
-        If the answer is not in the context, say "I could not find the answer in the document."
+        If the answer is not in the context, or if the context is empty, say "I could not find the answer in the document."
 
         Context:
         {context}
@@ -84,9 +90,7 @@ def get_chat_response(document_id, user_question, text_chunks):
         {user_question}
         """
         
-        # This line has the fix for the "model not found" error
         model = genai.GenerativeModel('gemini-1.5-flash-latest')
-        
         response = model.generate_content(prompt)
         return response.text
     except Exception as e:
