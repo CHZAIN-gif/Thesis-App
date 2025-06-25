@@ -3,6 +3,8 @@ import google.generativeai as genai
 import streamlit as st
 import faiss
 import numpy as np
+import os
+import io # We need to import the io library
 
 try:
     genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
@@ -42,22 +44,31 @@ def create_embeddings(text_chunks):
         dimension = len(embeddings[0])
         index = faiss.IndexFlatL2(dimension)
         index.add(np.array(embeddings).astype('float32'))
-        return faiss.write_index_buf(index)
+        
+        # --- THIS IS THE NEW, BETTER WAY TO SAVE TO MEMORY ---
+        with io.BytesIO() as bio:
+            faiss.write_index(index, faiss.PyCallbackIOWriter(bio.write))
+            return bio.getvalue()
+        
     except Exception as e:
         st.error(f"Could not create AI embeddings: {e}")
         return None
 
 def get_chat_response(faiss_index_data, user_question, text_chunks):
-    """The main chat function, loading the index from binary data."""
+    """The main chat function, now loading the index from binary data."""
     try:
-        index = faiss.read_index_buf(faiss_index_data)
+        # --- THIS IS THE NEW, BETTER WAY TO LOAD FROM MEMORY ---
+        index = faiss.read_index(faiss.PyCallbackIOReader(io.BytesIO(faiss_index_data).read))
+
         question_embedding_result = genai.embed_content(
             model='models/embedding-001',
             content=user_question,
             task_type="retrieval_query"
         )
         question_embedding = question_embedding_result['embedding']
+        
         distances, indices = index.search(np.array([question_embedding]).astype('float32'), k=3)
+        
         context = ""
         for i in indices[0]:
             if i < len(text_chunks):
@@ -73,6 +84,7 @@ def get_chat_response(faiss_index_data, user_question, text_chunks):
         Question:
         {user_question}
         """
+        
         model = genai.GenerativeModel('gemini-1.5-flash-latest')
         response = model.generate_content(prompt)
         return response.text
