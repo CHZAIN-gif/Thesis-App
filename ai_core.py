@@ -3,8 +3,6 @@ import google.generativeai as genai
 import streamlit as st
 import faiss
 import numpy as np
-import os
-import time
 
 try:
     genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
@@ -32,7 +30,8 @@ def split_text_into_chunks(text, chunk_size=1000, chunk_overlap=100):
         start += chunk_size - chunk_overlap
     return chunks
 
-def create_and_save_embeddings(text_chunks, document_id):
+def create_embeddings(text_chunks):
+    """Creates embeddings and returns the FAISS index as binary data."""
     try:
         result = genai.embed_content(
             model="models/embedding-001",
@@ -43,45 +42,30 @@ def create_and_save_embeddings(text_chunks, document_id):
         dimension = len(embeddings[0])
         index = faiss.IndexFlatL2(dimension)
         index.add(np.array(embeddings).astype('float32'))
-        index_folder = "faiss_indexes"
-        os.makedirs(index_folder, exist_ok=True)
-        index_path = os.path.join(index_folder, f"{document_id}.index")
-        faiss.write_index(index, index_path)
-        return index_path
+        return faiss.write_index_buf(index)
     except Exception as e:
-        st.error(f"Could not create AI embeddings. Is your API key valid? Error: {e}")
+        st.error(f"Could not create AI embeddings: {e}")
         return None
 
-def get_chat_response(document_id, user_question, text_chunks):
-    """The main chat function."""
+def get_chat_response(faiss_index_data, user_question, text_chunks):
+    """The main chat function, loading the index from binary data."""
     try:
-        index_path = f"faiss_indexes/{document_id}.index"
-        index = faiss.read_index(index_path)
-
+        index = faiss.read_index_buf(faiss_index_data)
         question_embedding_result = genai.embed_content(
             model='models/embedding-001',
             content=user_question,
             task_type="retrieval_query"
         )
         question_embedding = question_embedding_result['embedding']
-        
         distances, indices = index.search(np.array([question_embedding]).astype('float32'), k=3)
-        
         context = ""
         for i in indices[0]:
             if i < len(text_chunks):
                 context += text_chunks[i] + "\n"
 
-        # --- NEW DEBUGGING LINES ---
-        print("="*50)
-        print("CONTEXT PROVIDED TO AI:")
-        print(context)
-        print("="*50)
-        # --- END OF DEBUGGING LINES ---
-
         prompt = f"""
-        You are a helpful AI assistant. Answer the following question based ONLY on the provided context.
-        If the answer is not in the context, or if the context is empty, say "I could not find the answer in the document."
+        You are a helpful AI assistant. Answer the question based ONLY on the provided context.
+        If the answer is not in the context, say "I could not find the answer in the document."
 
         Context:
         {context}
@@ -89,9 +73,8 @@ def get_chat_response(document_id, user_question, text_chunks):
         Question:
         {user_question}
         """
-        
         model = genai.GenerativeModel('gemini-1.5-flash-latest')
         response = model.generate_content(prompt)
         return response.text
     except Exception as e:
-        return f"An error occurred while getting the chat response: {e}"
+        return f"An error occurred during chat: {e}"
