@@ -5,6 +5,8 @@ import faiss
 import numpy as np
 import io
 import json
+from gtts import gTTS # Import the new library
+import os
 
 # --- Configuration ---
 try:
@@ -13,7 +15,7 @@ except Exception:
     pass
 
 # --- CORE FUNCTIONS ---
-
+# ... (All previous functions like extract_text_from_pdf, get_chat_response, etc. remain here) ...
 def extract_text_from_pdf(pdf_path):
     try:
         with open(pdf_path, 'rb') as pdf_file_obj:
@@ -80,21 +82,14 @@ def get_chat_response(faiss_index_data, user_question, text_chunks):
     except Exception as e:
         return f"An error occurred during chat: {e}", ""
 
-# --- NEW INSIGHTS FUNCTION ---
 def generate_insights(full_text):
-    """Uses the AI to generate structured insights from the document text."""
-    
-    # We take the first 15000 characters to ensure we don't exceed API limits
-    # while still getting a very good overview of the document.
     truncated_text = full_text[:15000]
-
     prompt = f"""
     Analyze the following document text and provide a structured analysis in JSON format.
     The JSON object should have the following keys:
     - "one_sentence_summary": A single, concise sentence that summarizes the entire document.
     - "key_concepts": A list of 5 to 7 of the most important keywords or concepts found in the text.
     - "main_arguments": A brief summary (2-3 sentences) of the main purpose, arguments, or findings presented in the document.
-
     Here is the document text:
     ---
     {truncated_text}
@@ -103,14 +98,43 @@ def generate_insights(full_text):
     try:
         model = genai.GenerativeModel('gemini-1.5-flash-latest')
         response = model.generate_content(prompt)
-        
-        # Clean up the response to extract only the JSON part
         json_response = response.text.strip().replace("```json", "").replace("```", "")
-        
-        # Convert the JSON string into a Python dictionary
         insights = json.loads(json_response)
         return insights
     except Exception as e:
-        print(f"Error generating insights: {e}")
         return {"error": str(e)}
 
+# --- NEW AUDIO FUNCTION ---
+def generate_audio_summary(full_text, document_id):
+    """Generates a text summary and converts it to an audio file."""
+    
+    truncated_text = full_text[:15000]
+    prompt = f"""
+    You are an expert summarizer. Read the following document text and create a concise, easy-to-understand summary of about 200-300 words.
+    The summary should be suitable for a short audio overview or podcast segment.
+    
+    DOCUMENT TEXT:
+    ---
+    {truncated_text}
+    ---
+    """
+    try:
+        # Step 1: Generate the text summary
+        model = genai.GenerativeModel('gemini-1.5-flash-latest')
+        response = model.generate_content(prompt)
+        summary_text = response.text
+
+        # Step 2: Convert the summary text to an audio file
+        tts = gTTS(text=summary_text, lang='en')
+        
+        audio_folder = "audio_summaries"
+        os.makedirs(audio_folder, exist_ok=True)
+        audio_path = os.path.join(audio_folder, f"{document_id}.mp3")
+        
+        tts.save(audio_path)
+        
+        return audio_path, summary_text
+
+    except Exception as e:
+        print(f"Error generating audio summary: {e}")
+        return None, None
