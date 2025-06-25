@@ -5,25 +5,37 @@ import faiss
 import numpy as np
 import io
 
+# --- Configuration ---
 try:
     genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
 except Exception:
+    # This error will be shown on the page if the key is missing.
     pass
 
+# --- CORE FUNCTIONS ---
+
 def extract_text_from_pdf(pdf_path):
+    """
+    A more robust function to extract text from a PDF.
+    It handles pages that might not contain text.
+    """
     try:
         with open(pdf_path, 'rb') as pdf_file_obj:
             pdf_reader = PyPDF2.PdfReader(pdf_file_obj)
             full_text = ""
             for page in pdf_reader.pages:
                 page_text = page.extract_text()
+                # Important: Only add the text if it was successfully extracted
                 if page_text:
                     full_text += page_text + "\n"
-        return full_text if full_text else None
-    except Exception:
+        # If after checking all pages, the text is still empty, return None
+        return full_text if full_text.strip() else None
+    except Exception as e:
+        st.error(f"Error reading PDF file: {e}")
         return None
 
-def split_text_into_chunks(text, chunk_size=1000, chunk_overlap=100):
+def split_text_into_chunks(text, chunk_size=1500, chunk_overlap=200):
+    """Splits a long text into smaller, overlapping chunks."""
     if not text: return []
     chunks = []
     start = 0
@@ -34,6 +46,10 @@ def split_text_into_chunks(text, chunk_size=1000, chunk_overlap=100):
     return chunks
 
 def create_embeddings(text_chunks):
+    """Creates embeddings and returns the FAISS index as binary data."""
+    if not text_chunks:
+        st.error("Cannot create embeddings from empty text.")
+        return None
     try:
         result = genai.embed_content(
             model="models/embedding-001",
@@ -47,11 +63,12 @@ def create_embeddings(text_chunks):
         with io.BytesIO() as bio:
             faiss.write_index(index, faiss.PyCallbackIOWriter(bio.write))
             return bio.getvalue()
-    except Exception:
+    except Exception as e:
+        st.error(f"Could not create AI embeddings. This might be due to an API issue. Error: {e}")
         return None
 
 def get_chat_response(faiss_index_data, user_question, text_chunks):
-    """The main chat function. Now returns the response AND the context for debugging."""
+    """The main chat function."""
     try:
         index = faiss.read_index(faiss.PyCallbackIOReader(io.BytesIO(faiss_index_data).read))
         question_embedding_result = genai.embed_content(
@@ -60,14 +77,17 @@ def get_chat_response(faiss_index_data, user_question, text_chunks):
             task_type="retrieval_query"
         )
         question_embedding = question_embedding_result['embedding']
-        distances, indices = index.search(np.array([question_embedding]).astype('float32'), k=3)
+        distances, indices = index.search(np.array([question_embedding]).astype('float32'), k=5) # Search for 5 chunks
+        
         context = ""
         for i in indices[0]:
-            if i < len(text_chunks):
+            if i >= 0 and i < len(text_chunks): # Safety check for valid index
                 context += text_chunks[i] + "\n\n"
 
         prompt = f"""
-        Answer the following user question based ONLY on the provided context. If the answer is not available in the context, you must say 'I could not find the answer in the document.'
+        You are a helpful AI assistant. Your name is Thesis.
+        Answer the following user question based ONLY on the provided context.
+        If the answer is not available in the context, clearly say "I could not find the answer in the document." Do not try to make up an answer.
 
         CONTEXT:
         {context}
@@ -77,8 +97,6 @@ def get_chat_response(faiss_index_data, user_question, text_chunks):
         """
         model = genai.GenerativeModel('gemini-1.5-flash-latest')
         response = model.generate_content(prompt)
-        
-        # Return both the AI's text and the context we used
-        return response.text, context
+        return response.text
     except Exception as e:
-        return f"An error occurred during chat: {e}", ""
+        return f"An error occurred during chat: {e}"
