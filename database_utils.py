@@ -24,7 +24,6 @@ def get_user(username):
     return user_data
 
 def add_document(user_id, original_filename, storage_path, faiss_index):
-    """Adds a new document, now including the binary faiss_index."""
     conn = sqlite3.connect(DATABASE_NAME)
     cursor = conn.cursor()
     doc_id = None
@@ -35,7 +34,6 @@ def add_document(user_id, original_filename, storage_path, faiss_index):
         )
         doc_id = cursor.lastrowid
         conn.commit()
-        print(f"Document '{original_filename}' record added to database with ID: {doc_id}.")
     except Exception as e:
         print(f"Database Error: {e}")
     finally:
@@ -52,7 +50,6 @@ def get_documents_by_user(user_id):
     return documents
 
 def get_single_document(doc_id):
-    """Fetches a single document's data, including the faiss_index."""
     conn = sqlite3.connect(DATABASE_NAME)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
@@ -62,7 +59,6 @@ def get_single_document(doc_id):
     return document
 
 def add_message(document_id, role, content):
-    """Saves a new chat message to the database."""
     conn = sqlite3.connect(DATABASE_NAME)
     cursor = conn.cursor()
     try:
@@ -77,7 +73,6 @@ def add_message(document_id, role, content):
         conn.close()
 
 def get_messages_by_doc_id(document_id):
-    """Fetches all messages for a specific document."""
     conn = sqlite3.connect(DATABASE_NAME)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
