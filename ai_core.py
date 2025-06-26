@@ -21,14 +21,13 @@ except Exception:
 def extract_text_from_pdf(pdf_path):
     """
     The ultimate text extraction function. It tries a digital read first.
-    If that fails, it performs Cloud OCR page by page to handle large files.
+    If that fails, it uses the Cloud OCR API page by page.
     """
     print(f"Attempting to read document: {pdf_path}")
     full_text = ""
-    
     try:
         with pdfplumber.open(pdf_path) as pdf:
-            # First, try the fast, digital method for all pages
+            # First, try the fast, digital method
             for page in pdf.pages:
                 page_text = page.extract_text(x_tolerance=2, layout=True)
                 if page_text:
@@ -40,24 +39,24 @@ def extract_text_from_pdf(pdf_path):
                 full_text = "" # Reset text
                 api_key = st.secrets["OCR_SPACE_API_KEY"]
                 
-                # --- THIS IS THE NEW PAGE-BY-PAGE LOGIC ---
                 for i, page in enumerate(pdf.pages):
-                    st.write(f"Reading page {i + 1} with Cloud OCR...")
                     # Convert the page to an image in memory
                     with io.BytesIO() as image_bytes:
                         page.to_image(resolution=300).save(image_bytes, format="PNG")
-                        image_bytes.seek(0) # Go to the beginning of the in-memory file
+                        image_bytes.seek(0)
                         
-                        # Send the single page image to the API
+                        # --- THIS IS THE FIX ---
+                        # We now send a proper filename with the image data.
                         r = requests.post('https://api.ocr.space/parse/image',
-                                          files={'filename': image_bytes},
+                                          files={'filename': ('page.png', image_bytes, 'image/png')},
                                           data={'isOverlayRequired': False, 'apikey': api_key, 'language': 'eng'})
+                        
                         r.raise_for_status()
                         result = r.json()
                         
                         if result.get('IsErroredOnProcessing'):
                             st.error(f"OCR Error on page {i+1}: {result.get('ErrorMessage')}")
-                            continue # Skip this page and try the next one
+                            continue
                         
                         page_ocr_text = result.get('ParsedResults')[0].get('ParsedText')
                         if page_ocr_text:
@@ -68,13 +67,12 @@ def extract_text_from_pdf(pdf_path):
         return None
             
     if full_text.strip():
-        print(f"Successfully extracted {len(full_text)} characters.")
         return full_text
     else:
         st.error("Could not extract any text from this PDF.")
         return None
 
-# --- Other AI and utility functions remain the same ---
+# --- Other functions remain the same ---
 def extract_text_from_image(image_file_bytes, filename):
     try:
         api_key = st.secrets["OCR_SPACE_API_KEY"]
