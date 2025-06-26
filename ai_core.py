@@ -7,7 +7,8 @@ import io
 import json
 from gtts import gTTS
 import os
-import requests # The library to talk to the online API
+import requests
+from PIL import Image
 
 # --- Configuration ---
 try:
@@ -20,47 +21,74 @@ except Exception:
 def extract_text_from_pdf(pdf_path):
     """
     The ultimate text extraction function. It tries a digital read first.
-    If that fails, it uses the Cloud OCR API to "see" the text on each page.
+    If that fails, it performs Cloud OCR page by page to handle large files.
     """
     print(f"Attempting to read document: {pdf_path}")
     full_text = ""
     
-    # First, try the fast, digital method
     try:
         with pdfplumber.open(pdf_path) as pdf:
+            # First, try the fast, digital method for all pages
             for page in pdf.pages:
                 page_text = page.extract_text(x_tolerance=2, layout=True)
                 if page_text:
                     full_text += page_text + "\n"
+            
+            # If digital text is very short, assume it's a scan. Use Cloud OCR.
+            if len(full_text.strip()) < 100 * len(pdf.pages):
+                print("Digital text seems minimal. Attempting Cloud OCR fallback page by page...")
+                full_text = "" # Reset text
+                api_key = st.secrets["OCR_SPACE_API_KEY"]
+                
+                # --- THIS IS THE NEW PAGE-BY-PAGE LOGIC ---
+                for i, page in enumerate(pdf.pages):
+                    st.write(f"Reading page {i + 1} with Cloud OCR...")
+                    # Convert the page to an image in memory
+                    with io.BytesIO() as image_bytes:
+                        page.to_image(resolution=300).save(image_bytes, format="PNG")
+                        image_bytes.seek(0) # Go to the beginning of the in-memory file
+                        
+                        # Send the single page image to the API
+                        r = requests.post('https://api.ocr.space/parse/image',
+                                          files={'filename': image_bytes},
+                                          data={'isOverlayRequired': False, 'apikey': api_key, 'language': 'eng'})
+                        r.raise_for_status()
+                        result = r.json()
+                        
+                        if result.get('IsErroredOnProcessing'):
+                            st.error(f"OCR Error on page {i+1}: {result.get('ErrorMessage')}")
+                            continue # Skip this page and try the next one
+                        
+                        page_ocr_text = result.get('ParsedResults')[0].get('ParsedText')
+                        if page_ocr_text:
+                            full_text += page_ocr_text + "\n\n"
+                            
     except Exception as e:
-        print(f"Digital extraction failed: {e}")
-        full_text = ""
-
-    # If digital text is very short, it's likely a scan. Use Cloud OCR.
-    if len(full_text.strip()) < 100:
-        print("Digital text extraction was poor. Attempting Cloud OCR fallback...")
-        full_text = ""
-        try:
-            api_key = st.secrets["OCR_SPACE_API_KEY"]
-            with open(pdf_path, 'rb') as f:
-                r = requests.post('https://api.ocr.space/parse/image',
-                                  files={'filename': f},
-                                  data={'isOverlayRequired': False, 'apikey': api_key, 'language': 'eng'})
-            r.raise_for_status()
-            result = r.json()
-            if result.get('IsErroredOnProcessing'):
-                st.error(f"OCR Error: {result.get('ErrorMessage')}")
-                return None
-            full_text = result.get('ParsedResults')[0].get('ParsedText')
-        except Exception as e:
-            st.error(f"Cloud OCR failed: {e}")
-            return None
+        st.error(f"Error processing PDF: {e}")
+        return None
             
     if full_text.strip():
         print(f"Successfully extracted {len(full_text)} characters.")
         return full_text
     else:
         st.error("Could not extract any text from this PDF.")
+        return None
+
+# --- Other AI and utility functions remain the same ---
+def extract_text_from_image(image_file_bytes, filename):
+    try:
+        api_key = st.secrets["OCR_SPACE_API_KEY"]
+        payload = {'isOverlayRequired': False, 'apikey': api_key, 'language': 'eng'}
+        files_data = {filename: image_file_bytes}
+        r = requests.post('https://api.ocr.space/parse/image', files=files_data, data=payload)
+        r.raise_for_status()
+        result = r.json()
+        if result.get('IsErroredOnProcessing'):
+            st.error(f"OCR Error: {result.get('ErrorMessage')}")
+            return None
+        return result.get('ParsedResults')[0].get('ParsedText')
+    except Exception as e:
+        st.error(f"Error during API call to OCR.space: {e}")
         return None
 
 def split_text_into_chunks(text, chunk_size=1500, chunk_overlap=200):
@@ -76,11 +104,7 @@ def split_text_into_chunks(text, chunk_size=1500, chunk_overlap=200):
 def create_embeddings(text_chunks):
     if not text_chunks: return None
     try:
-        result = genai.embed_content(
-            model="models/embedding-001",
-            content=text_chunks,
-            task_type="retrieval_document"
-        )
+        result = genai.embed_content(model="models/embedding-001", content=text_chunks, task_type="retrieval_document")
         embeddings = result['embedding']
         dimension = len(embeddings[0])
         index = faiss.IndexFlatL2(dimension)
@@ -94,11 +118,7 @@ def create_embeddings(text_chunks):
 def get_chat_response(faiss_index_data, user_question, text_chunks):
     try:
         index = faiss.read_index(faiss.PyCallbackIOReader(io.BytesIO(faiss_index_data).read))
-        question_embedding_result = genai.embed_content(
-            model='models/embedding-001',
-            content=user_question,
-            task_type="retrieval_query"
-        )
+        question_embedding_result = genai.embed_content(model='models/embedding-001', content=user_question, task_type="retrieval_query")
         question_embedding = question_embedding_result['embedding']
         distances, indices = index.search(np.array([question_embedding]).astype('float32'), k=5)
         context = ""
@@ -107,12 +127,8 @@ def get_chat_response(faiss_index_data, user_question, text_chunks):
                 context += text_chunks[i] + "\n\n"
         prompt = f"""
         Answer the following user question based ONLY on the provided context. If the answer is not available in the context, clearly say "I could not find the answer in the document."
-
-        CONTEXT:
-        {context}
-
-        USER QUESTION:
-        {user_question}
+        CONTEXT: {context}
+        USER QUESTION: {user_question}
         """
         model = genai.GenerativeModel('gemini-1.5-flash-latest')
         response = model.generate_content(prompt)
@@ -147,7 +163,6 @@ def generate_audio_summary(full_text, document_id):
     prompt = f"""
     You are an expert summarizer. Read the following document text and create a concise, easy-to-understand summary of about 200-300 words.
     The summary should be suitable for a short audio overview or podcast segment.
-    
     DOCUMENT TEXT:
     ---
     {truncated_text}
