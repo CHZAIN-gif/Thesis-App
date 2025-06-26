@@ -1,11 +1,11 @@
-import PyPDF2
+import pdfplumber # WE ARE NOW USING THE NEW LIBRARY
 import google.generativeai as genai
 import streamlit as st
 import faiss
 import numpy as np
 import io
 import json
-from gtts import gTTS # Import the new library
+from gtts import gTTS
 import os
 
 # --- Configuration ---
@@ -15,18 +15,23 @@ except Exception:
     pass
 
 # --- CORE FUNCTIONS ---
-# ... (All previous functions like extract_text_from_pdf, get_chat_response, etc. remain here) ...
+
 def extract_text_from_pdf(pdf_path):
+    """
+    A more robust function to extract text from a PDF using pdfplumber.
+    """
+    print(f"Attempting to read text from PDF with pdfplumber: {pdf_path}")
     try:
-        with open(pdf_path, 'rb') as pdf_file_obj:
-            pdf_reader = PyPDF2.PdfReader(pdf_file_obj)
-            full_text = ""
-            for page in pdf_reader.pages:
+        full_text = ""
+        with pdfplumber.open(pdf_path) as pdf:
+            for page in pdf.pages:
                 page_text = page.extract_text()
                 if page_text:
                     full_text += page_text + "\n"
+        print("Text extraction with pdfplumber successful.")
         return full_text if full_text.strip() else None
-    except Exception:
+    except Exception as e:
+        print(f"Error reading PDF file with pdfplumber: {e}")
         return None
 
 def split_text_into_chunks(text, chunk_size=1500, chunk_overlap=200):
@@ -40,7 +45,9 @@ def split_text_into_chunks(text, chunk_size=1500, chunk_overlap=200):
     return chunks
 
 def create_embeddings(text_chunks):
-    if not text_chunks: return None
+    if not text_chunks:
+        st.error("Cannot create embeddings from empty text.")
+        return None
     try:
         result = genai.embed_content(
             model="models/embedding-001",
@@ -54,7 +61,8 @@ def create_embeddings(text_chunks):
         with io.BytesIO() as bio:
             faiss.write_index(index, faiss.PyCallbackIOWriter(bio.write))
             return bio.getvalue()
-    except Exception:
+    except Exception as e:
+        st.error(f"Could not create AI embeddings. This might be due to an API issue. Error: {e}")
         return None
 
 def get_chat_response(faiss_index_data, user_question, text_chunks):
@@ -71,10 +79,15 @@ def get_chat_response(faiss_index_data, user_question, text_chunks):
         for i in indices[0]:
             if i >= 0 and i < len(text_chunks):
                 context += text_chunks[i] + "\n\n"
+        
         prompt = f"""
         Answer the following user question based ONLY on the provided context. If the answer is not available in the context, clearly say "I could not find the answer in the document."
-        CONTEXT: {context}
-        USER QUESTION: {user_question}
+
+        CONTEXT:
+        {context}
+
+        USER QUESTION:
+        {user_question}
         """
         model = genai.GenerativeModel('gemini-1.5-flash-latest')
         response = model.generate_content(prompt)
@@ -90,6 +103,7 @@ def generate_insights(full_text):
     - "one_sentence_summary": A single, concise sentence that summarizes the entire document.
     - "key_concepts": A list of 5 to 7 of the most important keywords or concepts found in the text.
     - "main_arguments": A brief summary (2-3 sentences) of the main purpose, arguments, or findings presented in the document.
+
     Here is the document text:
     ---
     {truncated_text}
@@ -104,7 +118,6 @@ def generate_insights(full_text):
     except Exception as e:
         return {"error": str(e)}
 
-# --- NEW AUDIO FUNCTION ---
 def generate_audio_summary(full_text, document_id):
     """Generates a text summary and converts it to an audio file."""
     
