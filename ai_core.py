@@ -7,13 +7,7 @@ import io
 import json
 from gtts import gTTS
 import os
-from PIL import Image
-import pytesseract
-
-# This line might be needed if Tesseract isn't in your system's PATH.
-# If you get a "Tesseract not found" error, you would add the full path to your tesseract.exe here.
-# For now, we will assume it works automatically since your CMD test was successful.
-# pytesseract.pytesseract.tesseract_cmd = r'C:/Program Files/Tesseract-OCR/tesseract.exe'
+import requests # The library to talk to the online API
 
 # --- Configuration ---
 try:
@@ -25,13 +19,13 @@ except Exception:
 
 def extract_text_from_pdf(pdf_path):
     """
-    The ultimate text extraction function. It first tries a digital read.
-    If that fails, it performs OCR on the pages to "see" the text.
+    The ultimate text extraction function. It tries a digital read first.
+    If that fails, it uses the Cloud OCR API to "see" the text on each page.
     """
     print(f"Attempting to read document: {pdf_path}")
     full_text = ""
     
-    # First, try the fast, digital method using pdfplumber
+    # First, try the fast, digital method
     try:
         with pdfplumber.open(pdf_path) as pdf:
             for page in pdf.pages:
@@ -39,35 +33,36 @@ def extract_text_from_pdf(pdf_path):
                 if page_text:
                     full_text += page_text + "\n"
     except Exception as e:
-        print(f"Digital extraction with pdfplumber failed: {e}")
+        print(f"Digital extraction failed: {e}")
+        full_text = ""
 
-    # If digital extraction gives very little text, it might be a scan. Try OCR.
-    if len(full_text.strip()) < 200: # If we find less than 200 characters, assume it's a scan
-        print("Digital text extraction was poor. Attempting OCR with Tesseract...")
-        full_text = "" # Reset text to fill with OCR results
+    # If digital text is very short, it's likely a scan. Use Cloud OCR.
+    if len(full_text.strip()) < 100:
+        print("Digital text extraction was poor. Attempting Cloud OCR fallback...")
+        full_text = ""
         try:
-            with pdfplumber.open(pdf_path) as pdf:
-                for i, page in enumerate(pdf.pages):
-                    print(f"Performing OCR on page {i+1}...")
-                    # Convert page to an image
-                    im = page.to_image(resolution=300)
-                    # Use Tesseract to "see" the text in the image
-                    ocr_text = pytesseract.image_to_string(im.original, lang='eng')
-                    if ocr_text:
-                        full_text += ocr_text + "\n"
+            api_key = st.secrets["OCR_SPACE_API_KEY"]
+            with open(pdf_path, 'rb') as f:
+                r = requests.post('https://api.ocr.space/parse/image',
+                                  files={'filename': f},
+                                  data={'isOverlayRequired': False, 'apikey': api_key, 'language': 'eng'})
+            r.raise_for_status()
+            result = r.json()
+            if result.get('IsErroredOnProcessing'):
+                st.error(f"OCR Error: {result.get('ErrorMessage')}")
+                return None
+            full_text = result.get('ParsedResults')[0].get('ParsedText')
         except Exception as e:
-            st.error(f"An error occurred during OCR: {e}")
+            st.error(f"Cloud OCR failed: {e}")
             return None
-    
+            
     if full_text.strip():
         print(f"Successfully extracted {len(full_text)} characters.")
         return full_text
     else:
-        st.error("Could not extract any text from this PDF. It may be an image-only file or corrupted.")
+        st.error("Could not extract any text from this PDF.")
         return None
 
-
-# The rest of the functions remain the same as our last successful version
 def split_text_into_chunks(text, chunk_size=1500, chunk_overlap=200):
     if not text: return []
     chunks = []

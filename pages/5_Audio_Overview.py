@@ -5,8 +5,7 @@ import os
 
 st.set_page_config(page_title="Audio Overview", page_icon="🎧")
 
-# --- Function to generate the audio ---
-# We removed the cache decorator to fix the bug.
+# This function generates the audio. We removed the cache to fix the bug.
 def get_audio_for_document(_doc_id):
     document_data = get_single_document(_doc_id)
     if document_data:
