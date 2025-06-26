@@ -1,4 +1,4 @@
-import pdfplumber # WE ARE NOW USING THE NEW LIBRARY
+import pdfplumber
 import google.generativeai as genai
 import streamlit as st
 import faiss
@@ -18,20 +18,27 @@ except Exception:
 
 def extract_text_from_pdf(pdf_path):
     """
-    A more robust function to extract text from a PDF using pdfplumber.
+    A professional-grade function to extract text from a PDF.
+    It handles complex layouts and reads text in a logical order.
     """
-    print(f"Attempting to read text from PDF with pdfplumber: {pdf_path}")
+    print(f"Opening PDF with professional extractor: {pdf_path}")
+    full_text = ""
     try:
-        full_text = ""
         with pdfplumber.open(pdf_path) as pdf:
-            for page in pdf.pages:
-                page_text = page.extract_text()
+            for i, page in enumerate(pdf.pages):
+                # This setting is better for documents with columns and complex layouts.
+                page_text = page.extract_text(x_tolerance=2, y_tolerance=3, layout=True)
                 if page_text:
-                    full_text += page_text + "\n"
-        print("Text extraction with pdfplumber successful.")
-        return full_text if full_text.strip() else None
+                    full_text += f"\n--- PAGE {i+1} ---\n" + page_text
+        
+        if full_text.strip():
+            print(f"Successfully extracted {len(full_text)} characters using professional method.")
+            return full_text
+        else:
+            print("Warning: No text could be extracted from the PDF.")
+            return None
     except Exception as e:
-        print(f"Error reading PDF file with pdfplumber: {e}")
+        st.error(f"Error reading PDF: {e}")
         return None
 
 def split_text_into_chunks(text, chunk_size=1500, chunk_overlap=200):
@@ -45,9 +52,7 @@ def split_text_into_chunks(text, chunk_size=1500, chunk_overlap=200):
     return chunks
 
 def create_embeddings(text_chunks):
-    if not text_chunks:
-        st.error("Cannot create embeddings from empty text.")
-        return None
+    if not text_chunks: return None
     try:
         result = genai.embed_content(
             model="models/embedding-001",
@@ -61,8 +66,7 @@ def create_embeddings(text_chunks):
         with io.BytesIO() as bio:
             faiss.write_index(index, faiss.PyCallbackIOWriter(bio.write))
             return bio.getvalue()
-    except Exception as e:
-        st.error(f"Could not create AI embeddings. This might be due to an API issue. Error: {e}")
+    except Exception:
         return None
 
 def get_chat_response(faiss_index_data, user_question, text_chunks):
@@ -79,7 +83,6 @@ def get_chat_response(faiss_index_data, user_question, text_chunks):
         for i in indices[0]:
             if i >= 0 and i < len(text_chunks):
                 context += text_chunks[i] + "\n\n"
-        
         prompt = f"""
         Answer the following user question based ONLY on the provided context. If the answer is not available in the context, clearly say "I could not find the answer in the document."
 
@@ -132,12 +135,10 @@ def generate_audio_summary(full_text, document_id):
     ---
     """
     try:
-        # Step 1: Generate the text summary
         model = genai.GenerativeModel('gemini-1.5-flash-latest')
         response = model.generate_content(prompt)
         summary_text = response.text
 
-        # Step 2: Convert the summary text to an audio file
         tts = gTTS(text=summary_text, lang='en')
         
         audio_folder = "audio_summaries"
@@ -147,7 +148,6 @@ def generate_audio_summary(full_text, document_id):
         tts.save(audio_path)
         
         return audio_path, summary_text
-
     except Exception as e:
         print(f"Error generating audio summary: {e}")
         return None, None
